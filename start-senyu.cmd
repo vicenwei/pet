@@ -1,6 +1,11 @@
 @echo off
 cd /d "%~dp0"
 set "PNPM=%LOCALAPPDATA%\pnpm\bin\pnpm.CMD"
+set "CODEX_NODE=%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin"
+
+if exist "%CODEX_NODE%\node.exe" (
+  set "PATH=%CODEX_NODE%;%PATH%"
+)
 
 if not exist "%PNPM%" (
   echo pnpm was not found.
@@ -11,4 +16,3 @@ if not exist "%PNPM%" (
 
 call "%PNPM%" run dev
 pause
-
