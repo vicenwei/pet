@@ -11,5 +11,5 @@ yarn-error.log*
 .senyu-config.json
 assets/pets/senyu_base.png
 assets/pets/generated/*.png
+assets/pets/cutout_preview.png
 !assets/pets/generated/.gitkeep
-
