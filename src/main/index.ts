@@ -5,11 +5,13 @@ import {
   clipboard,
   dialog,
   ipcMain,
+  nativeImage,
   safeStorage,
   screen,
   shell
 } from 'electron';
-import { copyFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { ACTION_LABELS, PET_ACTIONS, buildActionPrompt } from '../shared/actionPrompts';
@@ -62,6 +64,8 @@ const petsDir = path.join(projectRoot, 'assets', 'pets');
 const generatedDir = path.join(petsDir, 'generated');
 const baseImagePath = path.join(petsDir, 'senyu_base.png');
 const configPath = path.join(app.getPath('userData'), 'config.json');
+const controlPort = 17873;
+const controlBaseUrl = `http://127.0.0.1:${controlPort}`;
 
 const defaultConfig: FullConfig = {
   imageApiBaseUrl: '',
@@ -274,6 +278,16 @@ async function getAssetStatus(): Promise<AssetStatus> {
     generatedDir,
     actions
   };
+}
+
+async function saveBaseImageAsPng(sourcePath: string): Promise<void> {
+  const image = nativeImage.createFromPath(sourcePath);
+  if (image.isEmpty()) {
+    throw new Error('选中的文件不是可读取的图片，请换一张 PNG、JPG 或 JPEG 图片');
+  }
+
+  await ensureProjectDirs();
+  await writeFile(baseImagePath, image.toPNG());
 }
 
 function loadRoute(route: 'admin' | 'pet', win: BrowserWindow): void {
@@ -637,11 +651,15 @@ function registerIpc(): void {
     await ensureProjectDirs();
     await shell.openPath(petsDir);
   });
+  ipcMain.handle('assets:open-generated-folder', async () => {
+    await ensureProjectDirs();
+    await shell.openPath(generatedDir);
+  });
   ipcMain.handle('assets:choose-base-image', async () => {
     const openOptions: Electron.OpenDialogOptions = {
       title: '选择森屿原始角色图',
       properties: ['openFile'],
-      filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
+      filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg'] }]
     };
     const result = adminWindow
       ? await dialog.showOpenDialog(adminWindow, openOptions)
@@ -664,8 +682,21 @@ function registerIpc(): void {
       if (confirm.response !== 0) return getAssetStatus();
     }
 
-    await ensureProjectDirs();
-    await copyFile(result.filePaths[0], baseImagePath);
+    try {
+      await saveBaseImageAsPng(result.filePaths[0]);
+    } catch (error) {
+      const message = sanitizeText(error instanceof Error ? error.message : error);
+      addLog('error', '资源', message);
+      const errorOptions: Electron.MessageBoxOptions = {
+        type: 'error',
+        title: '图片读取失败',
+        message
+      };
+      if (adminWindow) await dialog.showMessageBox(adminWindow, errorOptions);
+      else await dialog.showMessageBox(errorOptions);
+      return getAssetStatus();
+    }
+
     addLog('success', '资源', '原始角色图已更新：assets/pets/senyu_base.png');
     const assets = await getAssetStatus();
     broadcastAssets(assets);
@@ -753,19 +784,31 @@ function registerIpc(): void {
 
 app.setName('森屿桌宠');
 
-app.whenReady().then(async () => {
-  currentConfig = await loadConfig();
-  registerIpc();
-  await createAdminWindow();
-  await createPetWindow();
-  const assets = await getAssetStatus();
-  if (!assets.base.exists) {
-    addLog('warn', '资源', '未找到 assets/pets/senyu_base.png，桌宠将显示占位状态');
-  }
-  if (!currentConfig.imageApiBaseUrl || !currentConfig.imageApiKey) {
-    addLog('warn', 'API', '未配置生图 API，当前使用原始图运行基础桌宠功能');
-  }
-});
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    showAdminWindow();
+    petWindow?.show();
+    petWindow?.focus();
+  });
+
+  app.whenReady().then(async () => {
+    currentConfig = await loadConfig();
+    registerIpc();
+    await createAdminWindow();
+    await createPetWindow();
+    const assets = await getAssetStatus();
+    if (!assets.base.exists) {
+      addLog('warn', '资源', '未找到 assets/pets/senyu_base.png，桌宠将显示占位状态');
+    }
+    if (!currentConfig.imageApiBaseUrl || !currentConfig.imageApiKey) {
+      addLog('warn', 'API', '未配置生图 API，当前使用原始图运行基础桌宠功能');
+    }
+  });
+}
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {

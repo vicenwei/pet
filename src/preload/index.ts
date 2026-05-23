@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('senyuAPI', {
   testApi: (input: ApiTestInput): Promise<ApiTestResult> => ipcRenderer.invoke('api:test', input),
   refreshAssets: (): Promise<AssetStatus> => ipcRenderer.invoke('assets:refresh'),
   openPetsFolder: () => ipcRenderer.invoke('assets:open-folder'),
+  openGeneratedFolder: () => ipcRenderer.invoke('assets:open-generated-folder'),
   chooseBaseImage: () => ipcRenderer.invoke('assets:choose-base-image'),
   generateAllActions: () => ipcRenderer.invoke('generation:generate-all'),
   generateOneAction: (action: PetAction) => ipcRenderer.invoke('generation:generate-one', action),
@@ -55,4 +56,3 @@ contextBridge.exposeInMainWorld('senyuAPI', {
   onTriggerState: (callback: (payload: InteractionState) => void) => on('pet:trigger-state', callback),
   onForceAction: (callback: (payload: PetAction) => void) => on('pet:force-action', callback)
 });
-

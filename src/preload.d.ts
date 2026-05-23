@@ -21,6 +21,7 @@ declare global {
       testApi: (input: ApiTestInput) => Promise<ApiTestResult>;
       refreshAssets: () => Promise<AssetStatus>;
       openPetsFolder: () => Promise<void>;
+      openGeneratedFolder: () => Promise<void>;
       chooseBaseImage: () => Promise<AssetStatus>;
       generateAllActions: () => Promise<GenerationProgress>;
       generateOneAction: (action: PetAction) => Promise<GenerationProgress>;
@@ -55,4 +56,3 @@ declare global {
 }
 
 export {};
-

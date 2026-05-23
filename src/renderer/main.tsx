@@ -143,6 +143,29 @@ function AdminApp() {
   const [showKey, setShowKey] = useState(false);
   const [apiTestStatus, setApiTestStatus] = useState('未测试');
   const canGenerate = assets.base.exists && Boolean(draft.imageApiBaseUrl.trim()) && (Boolean(draft.imageApiKey?.trim()) || config.hasApiKey);
+  const setupChecks = [
+    {
+      label: '原始角色图',
+      ok: assets.base.exists,
+      detail: assets.base.exists ? '已找到 senyu_base.png' : '还没有放入原始图'
+    },
+    {
+      label: 'API URL',
+      ok: Boolean(draft.imageApiBaseUrl.trim()),
+      detail: draft.imageApiBaseUrl.trim() ? draft.imageApiBaseUrl.trim() : '还没有填写'
+    },
+    {
+      label: 'API Key',
+      ok: Boolean(draft.imageApiKey?.trim()) || config.hasApiKey,
+      detail: draft.imageApiKey?.trim() ? '本次会使用新填写的 Key' : config.hasApiKey ? `已保存 ${config.apiKeyMasked}` : '还没有填写'
+    },
+    {
+      label: '动作图',
+      ok: assets.actions.length > 0 && assets.actions.every((item) => item.exists),
+      detail: `${assets.actions.filter((item) => item.exists).length}/${PET_ACTIONS.length} 已生成`
+    }
+  ];
+  const recentLogs = logs.slice(-4).reverse();
 
   useEffect(() => {
     window.senyuAPI.getSnapshot().then((snapshot) => {
@@ -235,6 +258,7 @@ function AdminApp() {
   const navItems = [
     { id: 'base', label: '基础设置', icon: Home },
     { id: 'api', label: '生图 API', icon: KeyRound },
+    { id: 'appearance', label: '外观设置', icon: Maximize2 },
     { id: 'actions', label: '动作生成', icon: WandSparkles },
     { id: 'states', label: '互动状态', icon: MousePointer2 },
     { id: 'thinking', label: '思考路径', icon: MessageCircle },
@@ -314,6 +338,10 @@ function AdminApp() {
                     <FolderOpen size={17} />
                     打开文件夹
                   </button>
+                  <button type="button" onClick={() => window.senyuAPI.openGeneratedFolder()}>
+                    <FolderOpen size={17} />
+                    打开生成目录
+                  </button>
                   <button type="button" onClick={() => window.senyuAPI.chooseBaseImage().then(setAssets)}>
                     <FileImage size={17} />
                     更换图片
@@ -358,10 +386,14 @@ function AdminApp() {
               <label>
                 <span>图像模型</span>
                 <input
+                  list="image-model-options"
                   value={draft.imageModel}
                   placeholder="gpt-image-1"
                   onChange={(event) => setDraft((old) => ({ ...old, imageModel: event.target.value }))}
                 />
+                <datalist id="image-model-options">
+                  <option value="gpt-image-1" />
+                </datalist>
               </label>
             </div>
             <div className="button-row">
@@ -379,11 +411,48 @@ function AdminApp() {
               </button>
               <span className="muted-text">测试状态：{apiTestStatus}</span>
             </div>
-            <div className="toggle-row">
-              <label><input type="checkbox" checked={draft.showBubble} onChange={(event) => setDraft((old) => ({ ...old, showBubble: event.target.checked }))} />显示普通气泡</label>
-              <label><input type="checkbox" checked={draft.showThinkingPath} onChange={(event) => setDraft((old) => ({ ...old, showThinkingPath: event.target.checked }))} />显示思考路径气泡</label>
-              <label><input type="checkbox" checked={draft.alwaysOnTop} onChange={(event) => setDraft((old) => ({ ...old, alwaysOnTop: event.target.checked }))} />桌宠置顶</label>
-              <label><input type="checkbox" checked={draft.skipTaskbar} onChange={(event) => setDraft((old) => ({ ...old, skipTaskbar: event.target.checked }))} />不显示任务栏</label>
+          </section>
+
+          <section id="appearance" className="tool-section">
+            <div className="section-title">
+              <Settings size={21} />
+              <h2>外观和窗口</h2>
+            </div>
+            <div className="setting-grid">
+              <div className="scale-control">
+                <div className="field-heading">
+                  <span>桌宠大小</span>
+                  <strong>{Math.round(draft.petScale * 100)}%</strong>
+                </div>
+                <input
+                  type="range"
+                  min="0.7"
+                  max="1.6"
+                  step="0.05"
+                  value={draft.petScale}
+                  onChange={(event) => setDraft((old) => ({ ...old, petScale: Number(event.target.value) }))}
+                />
+                <div className="preset-row">
+                  {[0.8, 1, 1.25, 1.5].map((scale) => (
+                    <button type="button" key={scale} onClick={() => setDraft((old) => ({ ...old, petScale: scale }))}>
+                      {Math.round(scale * 100)}%
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="toggle-panel">
+                <label><input type="checkbox" checked={draft.showBubble} onChange={(event) => setDraft((old) => ({ ...old, showBubble: event.target.checked }))} />显示普通气泡</label>
+                <label><input type="checkbox" checked={draft.showThinkingPath} onChange={(event) => setDraft((old) => ({ ...old, showThinkingPath: event.target.checked }))} />显示思考路径气泡</label>
+                <label><input type="checkbox" checked={draft.alwaysOnTop} onChange={(event) => setDraft((old) => ({ ...old, alwaysOnTop: event.target.checked }))} />桌宠置顶</label>
+                <label><input type="checkbox" checked={draft.skipTaskbar} onChange={(event) => setDraft((old) => ({ ...old, skipTaskbar: event.target.checked }))} />不显示任务栏</label>
+              </div>
+            </div>
+            <div className="button-row">
+              <button type="button" className="primary subtle" onClick={saveConfig}>
+                <Save size={17} />
+                保存外观设置
+              </button>
+              <span className="muted-text">保存后会立即应用到桌宠窗口。</span>
             </div>
           </section>
 
@@ -403,6 +472,36 @@ function AdminApp() {
               </button>
               <span>{generation.statusText}</span>
               <progress value={generation.completed} max={Math.max(generation.total, 1)} />
+            </div>
+            <div className="quick-grid">
+              <div className="quick-panel">
+                <div className="field-heading">
+                  <span>快速检查</span>
+                  <strong>{setupChecks.every((item) => item.ok) ? '已就绪' : '待补全'}</strong>
+                </div>
+                <div className="check-list">
+                  {setupChecks.map((item) => (
+                    <div className={item.ok ? 'check-item ready' : 'check-item'} key={item.label}>
+                      {item.ok ? <CheckCircle2 size={16} /> : <Info size={16} />}
+                      <div>
+                        <strong>{item.label}</strong>
+                        <span>{item.detail}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="quick-panel">
+                <div className="field-heading">
+                  <span>最近日志</span>
+                  <strong>{logs.length} 条</strong>
+                </div>
+                <div className="mini-log">
+                  {recentLogs.length === 0 ? <span>暂无日志</span> : recentLogs.map((log) => (
+                    <p key={log.id} className={`log-${log.level}`}>[{log.time}] [{log.scope}] {log.message}</p>
+                  ))}
+                </div>
+              </div>
             </div>
             {generation.lastError ? <div className="error-box">失败原因：{generation.lastError}</div> : null}
             <div className="action-grid">
@@ -630,6 +729,7 @@ function PetApp() {
 
   async function handlePointerDown(event: React.PointerEvent) {
     if (event.button !== 0) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
     pointerRef.current = {
       ...pointerRef.current,
       down: true,
@@ -652,8 +752,11 @@ function PetApp() {
     }
   }
 
-  async function handlePointerUp() {
+  async function handlePointerUp(event: React.PointerEvent) {
     if (!pointerRef.current.down) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
     const wasDragging = pointerRef.current.dragging;
     pointerRef.current.down = false;
     pointerRef.current.dragging = false;
@@ -662,6 +765,16 @@ function PetApp() {
       pointerRef.current.suppressClickUntil = Date.now() + 350;
       transitionTo('drag_end', 'drag_end');
     }
+  }
+
+  async function handlePointerCancel(event: React.PointerEvent) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    pointerRef.current.down = false;
+    pointerRef.current.dragging = false;
+    await window.senyuAPI.dragEnd();
+    transitionTo('idle', 'pointer_cancel');
   }
 
   function handleClick() {
@@ -685,6 +798,7 @@ function PetApp() {
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerCancel}
         onClick={handleClick}
         onDoubleClick={handleDoubleClick}
         aria-label="森屿桌宠"
@@ -702,4 +816,3 @@ createRoot(document.getElementById('root')!).render(
     <App />
   </React.StrictMode>
 );
-
