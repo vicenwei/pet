@@ -7,8 +7,9 @@
 
 ## 使用步骤
 
-1. 把原始角色图放到 `assets/pets/senyu_base.png`。
+1. 把原始角色图放到 `assets/pets/senyu_base.png`，角色基准名固定为 `senyu_base`。
 2. 启动应用：双击 `start-senyu.cmd`，或在终端运行 `pnpm.cmd run dev`。
+   浏览器后台地址：`http://127.0.0.1:17872/#/admin`。
 3. 在后台工具里填写 `API URL` 和 `API Key`，点击“保存配置”。
 4. 点击“测试连接”。
 5. 点击“生成动作图”。

@@ -96,6 +96,58 @@ let generationProgress: GenerationProgress = {
   lastError: ''
 };
 
+function isAllowedControlOrigin(origin: string | undefined): boolean {
+  if (!origin) return true;
+  return (
+    origin === 'http://localhost:5173' ||
+    origin === 'http://127.0.0.1:5173' ||
+    origin === 'http://localhost:17872' ||
+    origin === 'http://127.0.0.1:17872'
+  );
+}
+
+function setControlHeaders(req: IncomingMessage, res: ServerResponse): boolean {
+  const origin = req.headers.origin;
+  if (!isAllowedControlOrigin(origin)) {
+    res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ error: '不允许的本机页面来源' }));
+    return false;
+  }
+
+  if (origin) res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Vary', 'Origin');
+  return true;
+}
+
+async function readJsonBody<T>(req: IncomingMessage): Promise<T> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  const raw = Buffer.concat(chunks).toString('utf-8').trim();
+  return raw ? (JSON.parse(raw) as T) : ({} as T);
+}
+
+function sendJson(res: ServerResponse, payload: unknown, statusCode = 200): void {
+  res.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.end(JSON.stringify(payload));
+}
+
+async function sendPng(res: ServerResponse, filePath: string): Promise<void> {
+  if (!(await fileExists(filePath))) {
+    sendJson(res, { error: '图片不存在' }, 404);
+    return;
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'image/png',
+    'Cache-Control': 'no-store'
+  });
+  res.end(await readFile(filePath));
+}
+
 function nowTime(): string {
   return new Date().toLocaleString('zh-CN', { hour12: false });
 }
@@ -277,6 +329,26 @@ async function getAssetStatus(): Promise<AssetStatus> {
     },
     generatedDir,
     actions
+  };
+}
+
+async function getBrowserAssetStatus(): Promise<AssetStatus> {
+  const status = await getAssetStatus();
+  const version = Date.now();
+  return {
+    ...status,
+    base: {
+      ...status.base,
+      fileUrl: status.base.exists ? `${controlBaseUrl}/asset/base?v=${version}` : ''
+    },
+    actions: status.actions.map((asset) => ({
+      ...asset,
+      fileUrl: asset.exists
+        ? `${controlBaseUrl}/asset/generated/${asset.fileName}?v=${version}`
+        : status.base.exists
+          ? `${controlBaseUrl}/asset/base?v=${version}`
+          : ''
+    }))
   };
 }
 
@@ -617,6 +689,13 @@ async function buildSnapshot(): Promise<AppSnapshot> {
   };
 }
 
+async function buildBrowserSnapshot(): Promise<AppSnapshot> {
+  return {
+    ...(await buildSnapshot()),
+    assets: await getBrowserAssetStatus()
+  };
+}
+
 function registerIpc(): void {
   ipcMain.handle('app:get-snapshot', () => buildSnapshot());
   ipcMain.handle('config:save', async (_event, input: SaveConfigInput) => {
@@ -782,6 +861,148 @@ function registerIpc(): void {
   });
 }
 
+function startControlServer(): void {
+  const server = createServer(async (req, res) => {
+    try {
+      if (!setControlHeaders(req, res)) return;
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
+      const url = new URL(req.url ?? '/', controlBaseUrl);
+      const route = `${req.method ?? 'GET'} ${url.pathname}`;
+
+      if (route === 'GET /snapshot') return sendJson(res, await buildBrowserSnapshot());
+      if (route === 'GET /assets/refresh') return sendJson(res, await getBrowserAssetStatus());
+      if (route === 'GET /asset/base') return sendPng(res, baseImagePath);
+      if (req.method === 'GET' && url.pathname.startsWith('/asset/generated/')) {
+        const fileName = path.basename(decodeURIComponent(url.pathname.replace('/asset/generated/', '')));
+        return sendPng(res, path.join(generatedDir, fileName));
+      }
+
+      if (route === 'POST /config/save') {
+        const input = await readJsonBody<SaveConfigInput>(req);
+        currentConfig = {
+          ...currentConfig,
+          imageApiBaseUrl: input.imageApiBaseUrl.trim(),
+          imageApiKey: input.imageApiKey?.trim() || currentConfig.imageApiKey,
+          imageModel: input.imageModel.trim() || defaultConfig.imageModel,
+          showBubble: input.showBubble,
+          showThinkingPath: input.showThinkingPath,
+          petScale: input.petScale,
+          alwaysOnTop: input.alwaysOnTop,
+          skipTaskbar: input.skipTaskbar
+        };
+        await persistConfig(currentConfig);
+        applyPetWindowPreferences();
+        broadcastConfig();
+        addLog('success', '配置', `配置已保存。Key：${maskKey(currentConfig.imageApiKey) || '未填写'}`);
+        return sendJson(res, toConfigView(currentConfig));
+      }
+
+      if (route === 'POST /config/clear') {
+        currentConfig = { ...defaultConfig };
+        await persistConfig(currentConfig);
+        applyPetWindowPreferences();
+        broadcastConfig();
+        addLog('warn', '配置', '本地 API 配置已清除');
+        return sendJson(res, toConfigView(currentConfig));
+      }
+
+      if (route === 'POST /api/test') return sendJson(res, await testImageApi(await readJsonBody<ApiTestInput>(req)));
+      if (route === 'POST /assets/open-folder') {
+        await ensureProjectDirs();
+        await shell.openPath(petsDir);
+        return sendJson(res, { ok: true });
+      }
+      if (route === 'POST /assets/open-generated-folder') {
+        await ensureProjectDirs();
+        await shell.openPath(generatedDir);
+        return sendJson(res, { ok: true });
+      }
+      if (route === 'POST /assets/choose-base-image') return sendJson(res, await getBrowserAssetStatus());
+      if (route === 'POST /generation/generate-all') return sendJson(res, await generateActions(PET_ACTIONS));
+      if (route === 'POST /generation/generate-one') {
+        const body = await readJsonBody<{ action: PetAction }>(req);
+        return sendJson(res, await generateActions([body.action]));
+      }
+      if (route === 'POST /pet/show') {
+        petWindow?.show();
+        petWindow?.focus();
+        return sendJson(res, { ok: true });
+      }
+      if (route === 'POST /pet/hide') {
+        petWindow?.hide();
+        return sendJson(res, { ok: true });
+      }
+      if (route === 'POST /app/exit') {
+        sendJson(res, { ok: true });
+        app.quit();
+        return;
+      }
+      if (route === 'POST /admin/show') {
+        showAdminWindow();
+        return sendJson(res, { ok: true });
+      }
+      if (route === 'POST /pet/trigger-state') {
+        const body = await readJsonBody<{ state: InteractionState }>(req);
+        petWindow?.webContents.send('pet:trigger-state', body.state);
+        addLog('info', '状态机', `浏览器测试状态：${body.state}`);
+        return sendJson(res, { ok: true });
+      }
+      if (route === 'POST /pet/force-action') {
+        const body = await readJsonBody<{ action: PetAction }>(req);
+        petWindow?.webContents.send('pet:force-action', body.action);
+        addLog('info', '动作', `浏览器应用测试动作：${body.action}`);
+        return sendJson(res, { ok: true });
+      }
+      if (route === 'POST /trace/add') {
+        const trace = await readJsonBody<ThoughtTrace>(req);
+        traces = [...traces, trace].slice(-100);
+        adminWindow?.webContents.send('traces:update', traces);
+        addLog('info', '状态路径', `${trace.fromState} -> ${trace.toState}：${trace.reason}`);
+        return sendJson(res, { ok: true });
+      }
+      if (route === 'POST /trace/clear') {
+        traces = [];
+        adminWindow?.webContents.send('traces:update', traces);
+        addLog('warn', '状态路径', '思考路径记录已清空');
+        return sendJson(res, { ok: true });
+      }
+      if (route === 'POST /trace/export') return sendJson(res, { filePath: '' });
+      if (route === 'POST /logs/clear') {
+        logs = [];
+        adminWindow?.webContents.send('logs:update', logs);
+        return sendJson(res, { ok: true });
+      }
+      if (route === 'POST /logs/copy') {
+        clipboard.writeText(logs.map((log) => `[${log.time}] [${log.level}] [${log.scope}] ${log.message}`).join('\n'));
+        addLog('success', '日志', '日志已复制到剪贴板');
+        return sendJson(res, { ok: true });
+      }
+      if (route === 'POST /pet/state-changed') {
+        const body = await readJsonBody<{ state: InteractionState }>(req);
+        currentPetState = body.state;
+        adminWindow?.webContents.send('pet:state', body.state);
+        return sendJson(res, { ok: true });
+      }
+
+      return sendJson(res, { error: '未知的本机接口' }, 404);
+    } catch (error) {
+      return sendJson(res, { error: sanitizeText(error instanceof Error ? error.message : error) }, 500);
+    }
+  });
+
+  server.listen(controlPort, '127.0.0.1', () => {
+    addLog('success', '前端', `浏览器预览接口已启动：${controlBaseUrl}`);
+  });
+  server.on('error', (error) => {
+    addLog('warn', '前端', `浏览器预览接口启动失败：${sanitizeText(error.message)}`);
+  });
+}
+
 app.setName('森屿桌宠');
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
@@ -798,6 +1019,7 @@ if (!gotSingleInstanceLock) {
   app.whenReady().then(async () => {
     currentConfig = await loadConfig();
     registerIpc();
+    startControlServer();
     await createAdminWindow();
     await createPetWindow();
     const assets = await getAssetStatus();

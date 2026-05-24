@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { createRoot } from 'react-dom/client';
+import { createRoot, type Root } from 'react-dom/client';
 import {
   Activity,
   Bug,
@@ -49,7 +49,14 @@ import {
   pickBubble,
   pickClickAction
 } from '@pet/stateMachine';
+import { isBrowserPreview, senyuAPI } from './senyuApi';
 import './styles.css';
+
+declare global {
+  interface Window {
+    __senyuRoot?: Root;
+  }
+}
 
 const emptyConfig: AppConfigView = {
   imageApiBaseUrl: '',
@@ -110,10 +117,10 @@ function WindowTitle({ title }: { title: string }) {
         <span>{title}</span>
       </div>
       <div className="window-controls">
-        <button type="button" onClick={() => window.senyuAPI.windowMinimize()} aria-label="最小化">
+        <button type="button" onClick={() => senyuAPI.windowMinimize()} aria-label="最小化">
           <Minimize size={18} />
         </button>
-        <button type="button" onClick={() => window.senyuAPI.windowClose()} aria-label="关闭">
+        <button type="button" onClick={() => senyuAPI.windowClose()} aria-label="关闭">
           <X size={19} />
         </button>
       </div>
@@ -168,7 +175,7 @@ function AdminApp() {
   const recentLogs = logs.slice(-4).reverse();
 
   useEffect(() => {
-    window.senyuAPI.getSnapshot().then((snapshot) => {
+    senyuAPI.getSnapshot().then((snapshot) => {
       setConfig(snapshot.config);
       setAssets(snapshot.assets);
       setLogs(snapshot.logs);
@@ -189,7 +196,7 @@ function AdminApp() {
     });
 
     const disposers = [
-      window.senyuAPI.onConfigUpdate((next) => {
+      senyuAPI.onConfigUpdate((next) => {
         setConfig(next);
         setDraft((old) => ({
           ...old,
@@ -202,25 +209,25 @@ function AdminApp() {
           skipTaskbar: next.skipTaskbar
         }));
       }),
-      window.senyuAPI.onAssetsUpdate(setAssets),
-      window.senyuAPI.onLogsUpdate(setLogs),
-      window.senyuAPI.onTracesUpdate(setTraces),
-      window.senyuAPI.onGenerationProgress(setGeneration),
-      window.senyuAPI.onPetVisibility(setPetVisible),
-      window.senyuAPI.onPetStateUpdate(setCurrentPetState)
+      senyuAPI.onAssetsUpdate(setAssets),
+      senyuAPI.onLogsUpdate(setLogs),
+      senyuAPI.onTracesUpdate(setTraces),
+      senyuAPI.onGenerationProgress(setGeneration),
+      senyuAPI.onPetVisibility(setPetVisible),
+      senyuAPI.onPetStateUpdate(setCurrentPetState)
     ];
     return () => disposers.forEach((dispose) => dispose());
   }, []);
 
   const saveConfig = async () => {
-    const next = await window.senyuAPI.saveConfig(draft);
+    const next = await senyuAPI.saveConfig(draft);
     setConfig(next);
     setDraft((old) => ({ ...old, imageApiKey: '' }));
   };
 
   const clearConfig = async () => {
     if (!window.confirm('确认清除本地 API 配置？清除后需要重新填写 API URL 和 API Key。')) return;
-    const next = await window.senyuAPI.clearConfig();
+    const next = await senyuAPI.clearConfig();
     setConfig(next);
     setDraft({
       imageApiBaseUrl: '',
@@ -236,7 +243,7 @@ function AdminApp() {
 
   const testApi = async () => {
     setApiTestStatus('测试中...');
-    const result = await window.senyuAPI.testApi({
+    const result = await senyuAPI.testApi({
       imageApiBaseUrl: draft.imageApiBaseUrl,
       imageApiKey: draft.imageApiKey,
       imageModel: draft.imageModel
@@ -251,8 +258,8 @@ function AdminApp() {
     }
     const ok = window.confirm('生成动作图会把原始角色图发送到你填写的第三方生图 API，请确认服务可信，并注意可能产生调用费用。');
     if (!ok) return;
-    if (action) await window.senyuAPI.generateOneAction(action);
-    else await window.senyuAPI.generateAllActions();
+    if (action) await senyuAPI.generateOneAction(action);
+    else await senyuAPI.generateAllActions();
   };
 
   const navItems = [
@@ -300,18 +307,21 @@ function AdminApp() {
           <header className="topbar">
             <div>
               <h1>森屿桌宠 - 后台工具</h1>
-              <p>当前状态：{petVisible ? '桌宠显示中' : '桌宠已隐藏'}，状态机：{currentPetState}</p>
+              <p>
+                当前状态：{petVisible ? '桌宠显示中' : '桌宠已隐藏'}，状态机：{currentPetState}
+                {isBrowserPreview ? '，浏览器预览已连接本机桌宠' : ''}
+              </p>
             </div>
             <div className="top-actions">
-              <button type="button" className="primary" onClick={() => window.senyuAPI.showPet()}>
+              <button type="button" className="primary" onClick={() => senyuAPI.showPet()}>
                 <Play size={17} />
                 启动桌宠
               </button>
-              <button type="button" onClick={() => window.senyuAPI.hidePet()}>
+              <button type="button" onClick={() => senyuAPI.hidePet()}>
                 <EyeOff size={17} />
                 隐藏桌宠
               </button>
-              <button type="button" className="danger" onClick={() => window.confirm('确认退出森屿桌宠？') && window.senyuAPI.exitApp()}>
+              <button type="button" className="danger" onClick={() => window.confirm('确认退出森屿桌宠？') && senyuAPI.exitApp()}>
                 <Power size={17} />
                 退出
               </button>
@@ -328,25 +338,26 @@ function AdminApp() {
                 {assets.base.exists ? <img src={assets.base.fileUrl} alt="原始角色图" /> : <span>未找到原始图</span>}
               </div>
               <div className="field-stack">
+                <div className="path-line">角色基准：senyu_base</div>
                 <div className="path-line">路径：{assets.base.relativePath}</div>
                 <div className={assets.base.exists ? 'success-line' : 'warn-line'}>
                   {assets.base.exists ? <CheckCircle2 size={17} /> : <Info size={17} />}
                   {assets.base.exists ? '图片已找到' : '请放入 assets/pets/senyu_base.png'}
                 </div>
                 <div className="button-row">
-                  <button type="button" onClick={() => window.senyuAPI.openPetsFolder()}>
+                  <button type="button" onClick={() => senyuAPI.openPetsFolder()}>
                     <FolderOpen size={17} />
                     打开文件夹
                   </button>
-                  <button type="button" onClick={() => window.senyuAPI.openGeneratedFolder()}>
+                  <button type="button" onClick={() => senyuAPI.openGeneratedFolder()}>
                     <FolderOpen size={17} />
                     打开生成目录
                   </button>
-                  <button type="button" onClick={() => window.senyuAPI.chooseBaseImage().then(setAssets)}>
+                  <button type="button" onClick={() => senyuAPI.chooseBaseImage().then(setAssets)}>
                     <FileImage size={17} />
                     更换图片
                   </button>
-                  <button type="button" onClick={() => window.senyuAPI.refreshAssets().then(setAssets)}>
+                  <button type="button" onClick={() => senyuAPI.refreshAssets().then(setAssets)}>
                     <RefreshCcw size={17} />
                     刷新检测
                   </button>
@@ -521,7 +532,7 @@ function AdminApp() {
                         <RefreshCcw size={15} />
                         生成
                       </button>
-                      <button type="button" onClick={() => window.senyuAPI.forcePetAction(action)}>
+                      <button type="button" onClick={() => senyuAPI.forcePetAction(action)}>
                         <Play size={15} />
                         应用测试
                       </button>
@@ -544,7 +555,7 @@ function AdminApp() {
               </div>
               <div className="state-buttons">
                 {DEBUG_STATES.map((state) => (
-                  <button type="button" key={state} onClick={() => window.senyuAPI.triggerPetState(state)}>
+                  <button type="button" key={state} onClick={() => senyuAPI.triggerPetState(state)}>
                     {state}
                   </button>
                 ))}
@@ -558,11 +569,11 @@ function AdminApp() {
               <h2>思考路径</h2>
             </div>
             <div className="button-row">
-              <button type="button" onClick={() => window.senyuAPI.exportTraces()}>
+              <button type="button" onClick={() => senyuAPI.exportTraces()}>
                 <Download size={17} />
                 导出 JSON
               </button>
-              <button type="button" onClick={() => window.confirm('确认清空思考路径记录？') && window.senyuAPI.clearTraces()}>
+              <button type="button" onClick={() => window.confirm('确认清空思考路径记录？') && senyuAPI.clearTraces()}>
                 <Trash2 size={17} />
                 清空记录
               </button>
@@ -586,11 +597,11 @@ function AdminApp() {
               <h2>日志调试</h2>
             </div>
             <div className="button-row">
-              <button type="button" onClick={() => window.senyuAPI.copyLogs()}>
+              <button type="button" onClick={() => senyuAPI.copyLogs()}>
                 <Copy size={17} />
                 复制日志
               </button>
-              <button type="button" onClick={() => window.confirm('确认清空日志？') && window.senyuAPI.clearLogs()}>
+              <button type="button" onClick={() => window.confirm('确认清空日志？') && senyuAPI.clearLogs()}>
                 <Trash2 size={17} />
                 清空日志
               </button>
@@ -635,15 +646,15 @@ function PetApp() {
   const pointerRef = useRef({ down: false, dragging: false, startX: 0, startY: 0, suppressClickUntil: 0 });
 
   useEffect(() => {
-    window.senyuAPI.getSnapshot().then((snapshot) => {
+    senyuAPI.getSnapshot().then((snapshot) => {
       setConfig(snapshot.config);
       setAssets(snapshot.assets);
     });
     const disposers = [
-      window.senyuAPI.onConfigUpdate(setConfig),
-      window.senyuAPI.onAssetsUpdate(setAssets),
-      window.senyuAPI.onTriggerState((next) => transitionTo(next, next)),
-      window.senyuAPI.onForceAction((nextAction) => forceAction(nextAction))
+      senyuAPI.onConfigUpdate(setConfig),
+      senyuAPI.onAssetsUpdate(setAssets),
+      senyuAPI.onTriggerState((next) => transitionTo(next, next)),
+      senyuAPI.onForceAction((nextAction) => forceAction(nextAction))
     ];
     resetLongIdle();
     transitionTo('idle', 'startup');
@@ -683,7 +694,7 @@ function PetApp() {
     setThinking(definition.thinkingText);
     setAnimation(definition.animation);
     fromStateRef.current = nextState;
-    window.senyuAPI.setPetState(nextState);
+    senyuAPI.setPetState(nextState);
 
     const trace = createThoughtTrace({
       event: eventName || definition.triggerEvent,
@@ -696,7 +707,7 @@ function PetApp() {
       durationMs: definition.durationMs,
       shortText: definition.thinkingText
     });
-    window.senyuAPI.reportTrace(trace);
+    senyuAPI.reportTrace(trace);
 
     if (!['long_idle', 'sleep'].includes(nextState)) resetLongIdle();
     if (definition.durationMs > 0 && definition.nextState) {
@@ -737,7 +748,7 @@ function PetApp() {
       startX: event.clientX,
       startY: event.clientY
     };
-    await window.senyuAPI.dragStart();
+    await senyuAPI.dragStart();
   }
 
   function handlePointerMove(event: React.PointerEvent) {
@@ -748,7 +759,7 @@ function PetApp() {
         pointerRef.current.dragging = true;
         transitionTo('drag_start', 'drag_start');
       }
-      window.senyuAPI.dragMove();
+      senyuAPI.dragMove();
     }
   }
 
@@ -760,7 +771,7 @@ function PetApp() {
     const wasDragging = pointerRef.current.dragging;
     pointerRef.current.down = false;
     pointerRef.current.dragging = false;
-    await window.senyuAPI.dragEnd();
+    await senyuAPI.dragEnd();
     if (wasDragging) {
       pointerRef.current.suppressClickUntil = Date.now() + 350;
       transitionTo('drag_end', 'drag_end');
@@ -773,7 +784,7 @@ function PetApp() {
     }
     pointerRef.current.down = false;
     pointerRef.current.dragging = false;
-    await window.senyuAPI.dragEnd();
+    await senyuAPI.dragEnd();
     transitionTo('idle', 'pointer_cancel');
   }
 
@@ -784,7 +795,7 @@ function PetApp() {
 
   function handleDoubleClick() {
     transitionTo('double_click', 'mouse_double_click');
-    window.senyuAPI.openAdmin();
+    senyuAPI.openAdmin();
   }
 
   return (
@@ -811,8 +822,13 @@ function PetApp() {
   );
 }
 
-createRoot(document.getElementById('root')!).render(
+const rootElement = document.getElementById('root')!;
+const root = window.__senyuRoot ?? createRoot(rootElement);
+window.__senyuRoot = root;
+
+root.render(
   <React.StrictMode>
     <App />
   </React.StrictMode>
 );
+
