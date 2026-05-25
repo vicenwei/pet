@@ -14,6 +14,7 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { PNG } from 'pngjs';
 import { ACTION_LABELS, PET_ACTIONS, buildActionPrompt } from '../shared/actionPrompts';
 import type {
   ApiTestInput,
@@ -561,6 +562,76 @@ async function extractGeneratedImage(responseJson: unknown, outputPath: string):
   throw new Error('接口返回格式里没有 b64_json 或 url');
 }
 
+function isGeneratedBackgroundPixel(data: Buffer, index: number): boolean {
+  const r = data[index];
+  const g = data[index + 1];
+  const b = data[index + 2];
+  const a = data[index + 3];
+
+  if (a === 0) return true;
+  if (r > 238 && g > 238 && b > 238) return true;
+
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const isNeutral = max - min < 12;
+
+  // Some image APIs return a fake checkerboard instead of real alpha.
+  if (isNeutral && r >= 212 && r <= 239 && g >= 212 && g <= 239 && b >= 212 && b <= 239) return true;
+
+  // Soft off-white background pixels around the subject.
+  return max - min < 28 && r > 228 && g > 225 && b > 218;
+}
+
+async function removeGeneratedBackground(imagePath: string): Promise<void> {
+  const png = PNG.sync.read(await readFile(imagePath));
+  const { width, height, data } = png;
+  const total = width * height;
+  const visited = new Uint8Array(total);
+  const queue = new Int32Array(total);
+  let head = 0;
+  let tail = 0;
+
+  const add = (x: number, y: number) => {
+    if (x < 0 || y < 0 || x >= width || y >= height) return;
+    const pixelIndex = y * width + x;
+    if (visited[pixelIndex]) return;
+    if (!isGeneratedBackgroundPixel(data, pixelIndex * 4)) return;
+    visited[pixelIndex] = 1;
+    queue[tail++] = pixelIndex;
+  };
+
+  for (let x = 0; x < width; x += 1) {
+    add(x, 0);
+    add(x, height - 1);
+  }
+  for (let y = 0; y < height; y += 1) {
+    add(0, y);
+    add(width - 1, y);
+  }
+
+  while (head < tail) {
+    const pixelIndex = queue[head++];
+    const x = pixelIndex % width;
+    const y = Math.floor(pixelIndex / width);
+    add(x + 1, y);
+    add(x - 1, y);
+    add(x, y + 1);
+    add(x, y - 1);
+  }
+
+  let transparentCount = 0;
+  for (let pixelIndex = 0; pixelIndex < total; pixelIndex += 1) {
+    if (visited[pixelIndex]) {
+      data[pixelIndex * 4 + 3] = 0;
+      transparentCount += 1;
+    }
+  }
+
+  if (transparentCount > 0) {
+    await writeFile(imagePath, PNG.sync.write(png));
+  }
+}
+
 async function callImageApi(action: PetAction, useReferenceImage: boolean): Promise<void> {
   const baseUrl = currentConfig.imageApiBaseUrl.trim();
   const apiKey = currentConfig.imageApiKey.trim();
@@ -591,6 +662,7 @@ async function callImageApi(action: PetAction, useReferenceImage: boolean): Prom
       throw new Error(`参考图生成失败：HTTP ${response.status} ${sanitizeText(text).slice(0, 260)}`);
     }
     await extractGeneratedImage(JSON.parse(text), outputPath);
+    await removeGeneratedBackground(outputPath);
     return;
   }
 
@@ -612,6 +684,7 @@ async function callImageApi(action: PetAction, useReferenceImage: boolean): Prom
     throw new Error(`文本生成失败：HTTP ${response.status} ${sanitizeText(text).slice(0, 260)}`);
   }
   await extractGeneratedImage(JSON.parse(text), outputPath);
+  await removeGeneratedBackground(outputPath);
 }
 
 async function generateActions(actions: PetAction[]): Promise<GenerationProgress> {
