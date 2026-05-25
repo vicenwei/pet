@@ -62,9 +62,9 @@ export const STATE_DEFINITIONS: Record<InteractionState, PetStateDefinition> = {
     triggerEvent: 'mouse_double_click',
     imageAction: 'talk',
     animation: 'pop',
-    bubbleTexts: ['我把后台工具打开啦。'],
-    thinkingText: '双击事件 → 打开后台',
-    reason: '检测到双击，需要打开后台工具窗口',
+    bubbleTexts: ['右键菜单里可以打开后台工具。'],
+    thinkingText: '双击事件 → 轻互动',
+    reason: '检测到双击，桌宠只做轻互动；后台仅能通过右键菜单打开',
     durationMs: 1800,
     nextState: 'idle'
   },
@@ -177,4 +177,3 @@ export function createThoughtTrace(input: {
     ...input
   };
 }
-

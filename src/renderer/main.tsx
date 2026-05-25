@@ -844,9 +844,9 @@ function PetApp() {
     const wasDragging = pointerRef.current.dragging;
     pointerRef.current.down = false;
     pointerRef.current.dragging = false;
+    if (wasDragging) pointerRef.current.suppressClickUntil = Date.now() + 350;
     await senyuAPI.dragEnd();
     if (wasDragging) {
-      pointerRef.current.suppressClickUntil = Date.now() + 350;
       transitionTo('drag_end', 'drag_end');
     }
   }
@@ -855,10 +855,15 @@ function PetApp() {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
+    const wasDragging = pointerRef.current.dragging;
     pointerRef.current.down = false;
     pointerRef.current.dragging = false;
-    await senyuAPI.dragEnd();
-    transitionTo('idle', 'pointer_cancel');
+    if (isBrowserPreview) {
+      await senyuAPI.dragEnd();
+      transitionTo('idle', 'pointer_cancel');
+      return;
+    }
+    if (!wasDragging) transitionTo('idle', 'pointer_cancel');
   }
 
   function handleClick() {

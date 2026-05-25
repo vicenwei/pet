@@ -16,6 +16,7 @@ type SenyuAPI = Window['senyuAPI'];
 
 const controlBaseUrl = 'http://127.0.0.1:17873';
 const noopUnsubscribe = () => {};
+const isElectronUserAgent = navigator.userAgent.includes('Electron');
 
 async function readResponse<T>(response: Response): Promise<T> {
   const text = await response.text();
@@ -67,9 +68,11 @@ function createBrowserApi(): SenyuAPI {
     clearLogs: () => post<void>('/logs/clear'),
     copyLogs: () => post<void>('/logs/copy'),
     setPetState: (state: InteractionState) => post<void>('/pet/state-changed', { state }),
-    dragStart: async () => {},
-    dragMove: () => {},
-    dragEnd: async () => {},
+    dragStart: () => (isElectronUserAgent ? post<void>('/pet/drag-start') : Promise.resolve()),
+    dragMove: () => {
+      if (isElectronUserAgent) void post<void>('/pet/drag-move');
+    },
+    dragEnd: () => (isElectronUserAgent ? post<void>('/pet/drag-end') : Promise.resolve()),
     windowMinimize: () => post<void>('/admin/minimize'),
     windowClose: () => post<void>('/admin/hide'),
     onConfigUpdate: (_callback: (payload: AppConfigView) => void) => noopUnsubscribe,
@@ -85,4 +88,4 @@ function createBrowserApi(): SenyuAPI {
 }
 
 export const senyuAPI: SenyuAPI = window.senyuAPI ?? createBrowserApi();
-export const isBrowserPreview = !window.senyuAPI;
+export const isBrowserPreview = !window.senyuAPI && !isElectronUserAgent;

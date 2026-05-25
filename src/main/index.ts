@@ -31,6 +31,16 @@ import type {
   ThoughtTrace
 } from '../shared/types';
 
+type KoffiLibrary = {
+  func: (signature: string) => (...args: unknown[]) => unknown;
+};
+
+type KoffiLoader = {
+  load: (library: string) => KoffiLibrary;
+};
+
+type GetAsyncKeyState = (virtualKey: number) => number;
+
 interface StoredConfig {
   imageApiBaseUrl?: string;
   imageApiKeyEncrypted?: string;
@@ -67,6 +77,8 @@ const baseImagePath = path.join(petsDir, 'senyu_base.png');
 const configPath = path.join(app.getPath('userData'), 'config.json');
 const controlPort = 17873;
 const controlBaseUrl = `http://127.0.0.1:${controlPort}`;
+const VK_LBUTTON = 0x01;
+const KEY_DOWN_MASK = 0x8000;
 
 const defaultConfig: FullConfig = {
   imageApiBaseUrl: '',
@@ -87,11 +99,13 @@ let currentConfig: FullConfig = { ...defaultConfig };
 let logs: LogEntry[] = [];
 let traces: ThoughtTrace[] = [];
 let currentPetState: InteractionState = 'idle';
+let getAsyncKeyState: GetAsyncKeyState | null = null;
 let dragState: {
   cursor: Electron.Point;
   bounds: Electron.Rectangle;
   active: boolean;
   moved: boolean;
+  lastMoveAt: number;
   stopAt: number;
   timer: ReturnType<typeof setInterval> | null;
 } | null = null;
@@ -519,12 +533,39 @@ function showAdminWindow(): void {
   adminWindow.focus();
 }
 
+async function setupMouseButtonReader(): Promise<void> {
+  if (process.platform !== 'win32') {
+    addLog('warn', '拖拽', '当前系统没有启用全局鼠标松开检测，将使用 15 秒超时兜底');
+    return;
+  }
+
+  try {
+    const koffiModule = (await import('koffi')) as unknown as KoffiLoader & { default?: KoffiLoader };
+    const koffi = koffiModule.default ?? koffiModule;
+    const user32 = koffi.load('user32.dll');
+    getAsyncKeyState = user32.func('short __stdcall GetAsyncKeyState(int vKey)') as GetAsyncKeyState;
+    addLog('success', '拖拽', 'Windows 全局鼠标松开检测已启用');
+  } catch (error) {
+    getAsyncKeyState = null;
+    addLog('warn', '拖拽', `全局鼠标松开检测不可用，将使用 15 秒超时兜底：${sanitizeText(error instanceof Error ? error.message : error)}`);
+  }
+}
+
+function isLeftMouseButtonDown(): boolean | null {
+  if (!getAsyncKeyState) return null;
+  return (getAsyncKeyState(VK_LBUTTON) & KEY_DOWN_MASK) !== 0;
+}
+
 function movePetWindowToCursor(point = screen.getCursorScreenPoint()): void {
   if (!petWindow || !dragState) return;
   const nextX = dragState.bounds.x + point.x - dragState.cursor.x;
   const nextY = dragState.bounds.y + point.y - dragState.cursor.y;
-  if (!dragState.moved && Math.hypot(point.x - dragState.cursor.x, point.y - dragState.cursor.y) < 4) return;
-  dragState.moved = true;
+  if (!dragState.moved) {
+    if (Math.hypot(point.x - dragState.cursor.x, point.y - dragState.cursor.y) < 4) return;
+    dragState.moved = true;
+    addLog('info', '拖拽', '桌宠窗口开始跟随鼠标');
+  }
+  dragState.lastMoveAt = Date.now();
   const display = screen.getDisplayNearestPoint(point);
   const maxX = display.workArea.x + display.workArea.width - dragState.bounds.width;
   const maxY = display.workArea.y + display.workArea.height - dragState.bounds.height;
@@ -541,17 +582,24 @@ function startPetDragFollow(): void {
   dragState.timer = setInterval(() => {
     if (!dragState) return;
     if (Date.now() > dragState.stopAt) {
-      stopPetDragFollow();
+      stopPetDragFollow('timeout');
       return;
     }
     movePetWindowToCursor();
+    if (!dragState) return;
+    if (isLeftMouseButtonDown() === false && dragState.moved && Date.now() - dragState.lastMoveAt > 120) {
+      stopPetDragFollow('mouse_up');
+    }
   }, 16);
   dragState.timer.unref?.();
 }
 
-function stopPetDragFollow(): void {
-  if (dragState?.timer) clearInterval(dragState.timer);
+function stopPetDragFollow(reason = 'renderer_end'): void {
+  if (!dragState) return;
+  const moved = dragState.moved;
+  if (dragState.timer) clearInterval(dragState.timer);
   dragState = null;
+  if (moved) addLog('info', '拖拽', `桌宠拖拽结束：${reason}`);
 }
 
 function buildApiUrl(baseUrl: string, endpoint: string): string {
@@ -955,15 +1003,17 @@ function registerIpc(): void {
   });
   ipcMain.handle('pet:drag-start', () => {
     if (!petWindow) return;
-    stopPetDragFollow();
+    stopPetDragFollow('restart');
     dragState = {
       cursor: screen.getCursorScreenPoint(),
       bounds: petWindow.getBounds(),
       active: false,
       moved: false,
+      lastMoveAt: 0,
       stopAt: Date.now() + 15000,
       timer: null
     };
+    addLog('info', '拖拽', '桌宠拖拽已开始');
     startPetDragFollow();
   });
   ipcMain.on('pet:drag-move', () => {
@@ -972,7 +1022,7 @@ function registerIpc(): void {
     movePetWindowToCursor();
   });
   ipcMain.handle('pet:drag-end', () => {
-    stopPetDragFollow();
+    stopPetDragFollow('renderer_end');
   });
   ipcMain.handle('window:minimize', (event) => BrowserWindow.fromWebContents(event.sender)?.minimize());
   ipcMain.handle('window:close', (event) => {
@@ -1113,6 +1163,34 @@ function startControlServer(): void {
         adminWindow?.webContents.send('pet:state', body.state);
         return sendJson(res, { ok: true });
       }
+      if (route === 'POST /pet/drag-start') {
+        if (petWindow) {
+          stopPetDragFollow('restart');
+          dragState = {
+            cursor: screen.getCursorScreenPoint(),
+            bounds: petWindow.getBounds(),
+            active: false,
+            moved: false,
+            lastMoveAt: 0,
+            stopAt: Date.now() + 15000,
+            timer: null
+          };
+          addLog('info', '拖拽', '桌宠拖拽已开始');
+          startPetDragFollow();
+        }
+        return sendJson(res, { ok: true });
+      }
+      if (route === 'POST /pet/drag-move') {
+        if (petWindow && dragState) {
+          startPetDragFollow();
+          movePetWindowToCursor();
+        }
+        return sendJson(res, { ok: true });
+      }
+      if (route === 'POST /pet/drag-end') {
+        stopPetDragFollow('renderer_end');
+        return sendJson(res, { ok: true });
+      }
 
       return sendJson(res, { error: '未知的本机接口' }, 404);
     } catch (error) {
@@ -1144,6 +1222,7 @@ if (!gotSingleInstanceLock) {
     currentConfig = await loadConfig();
     registerIpc();
     startControlServer();
+    await setupMouseButtonReader();
     await createPetWindow();
     const assets = await getAssetStatus();
     if (!assets.base.exists) {
