@@ -653,13 +653,25 @@ progress {
 .pet-hit-area {
   width: 86%;
   height: 78%;
-  border: 0;
+  border: 0 !important;
   padding: 0;
-  background: transparent;
+  background: transparent !important;
   box-shadow: none;
   position: relative;
   cursor: grab;
   touch-action: none;
+  outline: none;
+  appearance: none;
+  border-radius: 0;
+}
+
+.pet-hit-area:hover,
+.pet-hit-area:focus,
+.pet-hit-area:active {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none;
+  outline: none;
 }
 
 .pet-hit-area:active {

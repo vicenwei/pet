@@ -723,7 +723,7 @@ async function generateActions(actions: PetAction[]): Promise<GenerationProgress
         statusText: `${ACTION_LABELS[action]} 已生成`
       };
       addLog('success', '生图', `${action}.png 已保存`);
-      const assets = await getAssetStatus();
+      const assets = await getBrowserAssetStatus();
       broadcastAssets(assets);
       broadcastGeneration();
     }
@@ -753,7 +753,7 @@ async function generateActions(actions: PetAction[]): Promise<GenerationProgress
 async function buildSnapshot(): Promise<AppSnapshot> {
   return {
     config: toConfigView(currentConfig),
-    assets: await getAssetStatus(),
+    assets: await getBrowserAssetStatus(),
     logs,
     traces,
     generation: generationProgress,
@@ -798,7 +798,7 @@ function registerIpc(): void {
     return toConfigView(currentConfig);
   });
   ipcMain.handle('api:test', (_event, input: ApiTestInput) => testImageApi(input));
-  ipcMain.handle('assets:refresh', () => getAssetStatus());
+  ipcMain.handle('assets:refresh', () => getBrowserAssetStatus());
   ipcMain.handle('assets:open-folder', async () => {
     await ensureProjectDirs();
     await shell.openPath(petsDir);
@@ -816,7 +816,7 @@ function registerIpc(): void {
     const result = adminWindow
       ? await dialog.showOpenDialog(adminWindow, openOptions)
       : await dialog.showOpenDialog(openOptions);
-    if (result.canceled || !result.filePaths[0]) return getAssetStatus();
+    if (result.canceled || !result.filePaths[0]) return getBrowserAssetStatus();
 
     if (await fileExists(baseImagePath)) {
       const messageOptions: Electron.MessageBoxOptions = {
@@ -831,7 +831,7 @@ function registerIpc(): void {
       const confirm = adminWindow
         ? await dialog.showMessageBox(adminWindow, messageOptions)
         : await dialog.showMessageBox(messageOptions);
-      if (confirm.response !== 0) return getAssetStatus();
+        if (confirm.response !== 0) return getBrowserAssetStatus();
     }
 
     try {
@@ -846,11 +846,11 @@ function registerIpc(): void {
       };
       if (adminWindow) await dialog.showMessageBox(adminWindow, errorOptions);
       else await dialog.showMessageBox(errorOptions);
-      return getAssetStatus();
+      return getBrowserAssetStatus();
     }
 
     addLog('success', '资源', '原始角色图已更新：assets/pets/senyu_base.png');
-    const assets = await getAssetStatus();
+    const assets = await getBrowserAssetStatus();
     broadcastAssets(assets);
     return assets;
   });
