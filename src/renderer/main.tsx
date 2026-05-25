@@ -105,6 +105,26 @@ function useBodyMode(mode: 'admin' | 'pet') {
   }, [mode]);
 }
 
+function clampPreviewPosition(position: { x: number; y: number }, size: { width: number; height: number }) {
+  const margin = 12;
+  const maxX = Math.max(margin, window.innerWidth - size.width - margin);
+  const maxY = Math.max(margin, window.innerHeight - size.height - margin);
+  return {
+    x: Math.min(Math.max(margin, position.x), maxX),
+    y: Math.min(Math.max(margin, position.y), maxY)
+  };
+}
+
+function getDefaultPreviewPosition(size: { width: number; height: number }) {
+  return clampPreviewPosition(
+    {
+      x: window.innerWidth - size.width - 44,
+      y: window.innerHeight - size.height - 36
+    },
+    size
+  );
+}
+
 function App() {
   return isPetRoute() ? <PetApp /> : <AdminApp />;
 }
@@ -643,7 +663,24 @@ function PetApp() {
   const stateTimerRef = useRef<number | null>(null);
   const longIdleTimerRef = useRef<number | null>(null);
   const touchTimerRef = useRef<number | null>(null);
-  const pointerRef = useRef({ down: false, dragging: false, startX: 0, startY: 0, suppressClickUntil: 0 });
+  const previewSize = useMemo(
+    () => ({
+      width: Math.round(330 * config.petScale),
+      height: Math.round(430 * config.petScale)
+    }),
+    [config.petScale]
+  );
+  const [previewPosition, setPreviewPosition] = useState(() => getDefaultPreviewPosition({ width: 330, height: 430 }));
+  const previewPositionRef = useRef(previewPosition);
+  const pointerRef = useRef({
+    down: false,
+    dragging: false,
+    startX: 0,
+    startY: 0,
+    previewStartX: 0,
+    previewStartY: 0,
+    suppressClickUntil: 0
+  });
 
   useEffect(() => {
     senyuAPI.getSnapshot().then((snapshot) => {
@@ -663,6 +700,20 @@ function PetApp() {
       clearTimers();
     };
   }, []);
+
+  useEffect(() => {
+    if (!isBrowserPreview) return;
+    const keepPetInView = () => {
+      setPreviewPosition((current) => {
+        const next = clampPreviewPosition(current, previewSize);
+        previewPositionRef.current = next;
+        return next;
+      });
+    };
+    keepPetInView();
+    window.addEventListener('resize', keepPetInView);
+    return () => window.removeEventListener('resize', keepPetInView);
+  }, [previewSize]);
 
   const actionAsset = useMemo(() => assets.actions.find((item) => item.action === action), [action, assets.actions]);
   const imageUrl = actionAsset?.fileUrl || assets.base.fileUrl;
@@ -740,26 +791,44 @@ function PetApp() {
 
   async function handlePointerDown(event: React.PointerEvent) {
     if (event.button !== 0) return;
+    event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     pointerRef.current = {
       ...pointerRef.current,
       down: true,
       dragging: false,
       startX: event.clientX,
-      startY: event.clientY
+      startY: event.clientY,
+      previewStartX: previewPositionRef.current.x,
+      previewStartY: previewPositionRef.current.y
     };
     await senyuAPI.dragStart();
   }
 
   function handlePointerMove(event: React.PointerEvent) {
     if (!pointerRef.current.down) return;
-    const distance = Math.hypot(event.clientX - pointerRef.current.startX, event.clientY - pointerRef.current.startY);
+    event.preventDefault();
+    const deltaX = event.clientX - pointerRef.current.startX;
+    const deltaY = event.clientY - pointerRef.current.startY;
+    const distance = Math.hypot(deltaX, deltaY);
     if (distance > 5) {
       if (!pointerRef.current.dragging) {
         pointerRef.current.dragging = true;
         transitionTo('drag_start', 'drag_start');
       }
-      senyuAPI.dragMove();
+      if (isBrowserPreview) {
+        const next = clampPreviewPosition(
+          {
+            x: pointerRef.current.previewStartX + deltaX,
+            y: pointerRef.current.previewStartY + deltaY
+          },
+          previewSize
+        );
+        previewPositionRef.current = next;
+        setPreviewPosition(next);
+      } else {
+        senyuAPI.dragMove();
+      }
     }
   }
 
@@ -798,8 +867,19 @@ function PetApp() {
     senyuAPI.openAdmin();
   }
 
+  const previewShellStyle: React.CSSProperties | undefined = isBrowserPreview
+    ? {
+        width: `${previewSize.width}px`,
+        height: `${previewSize.height}px`,
+        transform: `translate3d(${previewPosition.x}px, ${previewPosition.y}px, 0)`
+      }
+    : undefined;
+
   return (
-    <div className={`pet-shell state-${state} anim-${animation.replace(/\s+/g, ' anim-')}`}>
+    <div
+      className={`pet-shell${isBrowserPreview ? ' browser-preview' : ''} state-${state} anim-${animation.replace(/\s+/g, ' anim-')}`}
+      style={previewShellStyle}
+    >
       {config.showBubble && bubble ? <div className="pet-bubble">{bubble}</div> : null}
       <button
         type="button"

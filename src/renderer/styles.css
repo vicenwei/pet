@@ -650,6 +650,13 @@ progress {
   user-select: none;
 }
 
+.pet-shell.browser-preview {
+  position: fixed;
+  left: 0;
+  top: 0;
+  will-change: transform;
+}
+
 .pet-hit-area {
   width: 86%;
   height: 78%;
