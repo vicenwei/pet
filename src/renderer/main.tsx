@@ -341,6 +341,10 @@ function AdminApp() {
                 <EyeOff size={17} />
                 隐藏桌宠
               </button>
+              <button type="button" onClick={() => senyuAPI.windowMinimize()}>
+                <Minimize size={17} />
+                最小化后台
+              </button>
               <button type="button" className="danger" onClick={() => window.confirm('确认退出森屿桌宠？') && senyuAPI.exitApp()}>
                 <Power size={17} />
                 退出
@@ -802,7 +806,7 @@ function PetApp() {
       previewStartX: previewPositionRef.current.x,
       previewStartY: previewPositionRef.current.y
     };
-    await senyuAPI.dragStart();
+    await senyuAPI.dragStart({ screenX: event.screenX, screenY: event.screenY });
   }
 
   function handlePointerMove(event: React.PointerEvent) {
@@ -827,7 +831,7 @@ function PetApp() {
         previewPositionRef.current = next;
         setPreviewPosition(next);
       } else {
-        senyuAPI.dragMove();
+        senyuAPI.dragMove({ screenX: event.screenX, screenY: event.screenY });
       }
     }
   }

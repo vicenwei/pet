@@ -67,11 +67,11 @@ function createBrowserApi(): SenyuAPI {
     clearLogs: () => post<void>('/logs/clear'),
     copyLogs: () => post<void>('/logs/copy'),
     setPetState: (state: InteractionState) => post<void>('/pet/state-changed', { state }),
-    dragStart: async () => {},
-    dragMove: () => {},
+    dragStart: async (_point?: { screenX: number; screenY: number }) => {},
+    dragMove: (_point?: { screenX: number; screenY: number }) => {},
     dragEnd: async () => {},
-    windowMinimize: async () => {},
-    windowClose: async () => {},
+    windowMinimize: () => post<void>('/admin/minimize'),
+    windowClose: () => post<void>('/admin/hide'),
     onConfigUpdate: (_callback: (payload: AppConfigView) => void) => noopUnsubscribe,
     onAssetsUpdate: (_callback: (payload: AssetStatus) => void) => noopUnsubscribe,
     onLogsUpdate: (_callback: (payload: LogEntry[]) => void) => noopUnsubscribe,
@@ -86,4 +86,3 @@ function createBrowserApi(): SenyuAPI {
 
 export const senyuAPI: SenyuAPI = window.senyuAPI ?? createBrowserApi();
 export const isBrowserPreview = !window.senyuAPI;
-

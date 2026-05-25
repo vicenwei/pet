@@ -87,7 +87,12 @@ let currentConfig: FullConfig = { ...defaultConfig };
 let logs: LogEntry[] = [];
 let traces: ThoughtTrace[] = [];
 let currentPetState: InteractionState = 'idle';
-let dragState: { cursor: Electron.Point; bounds: Electron.Rectangle } | null = null;
+let dragState: {
+  cursor: Electron.Point;
+  bounds: Electron.Rectangle;
+  active: boolean;
+  timer: ReturnType<typeof setInterval> | null;
+} | null = null;
 let generationProgress: GenerationProgress = {
   running: false,
   currentAction: null,
@@ -371,7 +376,7 @@ function loadRoute(route: 'admin' | 'pet', win: BrowserWindow): void {
   win.loadFile(path.join(__dirname, '../renderer/index.html'), { hash: `/${route}` });
 }
 
-async function createAdminWindow(): Promise<void> {
+async function createAdminWindow(showWhenReady = false): Promise<void> {
   adminWindow = new BrowserWindow({
     width: 1180,
     height: 820,
@@ -391,7 +396,11 @@ async function createAdminWindow(): Promise<void> {
   adminWindow.on('closed', () => {
     adminWindow = null;
   });
-  adminWindow.once('ready-to-show', () => adminWindow?.show());
+  adminWindow.once('ready-to-show', () => {
+    if (!showWhenReady) return;
+    adminWindow?.show();
+    adminWindow?.focus();
+  });
   loadRoute('admin', adminWindow);
 }
 
@@ -500,11 +509,46 @@ function showPetContextMenu(): void {
 
 function showAdminWindow(): void {
   if (!adminWindow) {
-    void createAdminWindow();
+    void createAdminWindow(true);
     return;
   }
+  if (adminWindow.isMinimized()) adminWindow.restore();
   adminWindow.show();
   adminWindow.focus();
+}
+
+function toScreenPoint(point?: { screenX: number; screenY: number }): Electron.Point {
+  if (!point || !Number.isFinite(point.screenX) || !Number.isFinite(point.screenY)) {
+    return screen.getCursorScreenPoint();
+  }
+  return { x: Math.round(point.screenX), y: Math.round(point.screenY) };
+}
+
+function movePetWindowToCursor(point = screen.getCursorScreenPoint()): void {
+  if (!petWindow || !dragState) return;
+  const nextX = dragState.bounds.x + point.x - dragState.cursor.x;
+  const nextY = dragState.bounds.y + point.y - dragState.cursor.y;
+  const display = screen.getDisplayNearestPoint(point);
+  const maxX = display.workArea.x + display.workArea.width - dragState.bounds.width;
+  const maxY = display.workArea.y + display.workArea.height - dragState.bounds.height;
+  petWindow.setPosition(
+    Math.min(Math.max(display.workArea.x, nextX), maxX),
+    Math.min(Math.max(display.workArea.y, nextY), maxY),
+    false
+  );
+}
+
+function startPetDragFollow(): void {
+  if (!dragState || dragState.active) return;
+  dragState.active = true;
+  movePetWindowToCursor();
+  dragState.timer = setInterval(movePetWindowToCursor, 16);
+  dragState.timer.unref?.();
+}
+
+function stopPetDragFollow(): void {
+  if (dragState?.timer) clearInterval(dragState.timer);
+  dragState = null;
 }
 
 function buildApiUrl(baseUrl: string, endpoint: string): string {
@@ -907,24 +951,22 @@ function registerIpc(): void {
     currentPetState = state;
     adminWindow?.webContents.send('pet:state', state);
   });
-  ipcMain.handle('pet:drag-start', () => {
+  ipcMain.handle('pet:drag-start', (_event, point?: { screenX: number; screenY: number }) => {
     if (!petWindow) return;
     dragState = {
-      cursor: screen.getCursorScreenPoint(),
-      bounds: petWindow.getBounds()
+      cursor: toScreenPoint(point),
+      bounds: petWindow.getBounds(),
+      active: false,
+      timer: null
     };
   });
-  ipcMain.on('pet:drag-move', () => {
+  ipcMain.on('pet:drag-move', (_event, point?: { screenX: number; screenY: number }) => {
     if (!petWindow || !dragState) return;
-    const cursor = screen.getCursorScreenPoint();
-    petWindow.setBounds({
-      ...dragState.bounds,
-      x: dragState.bounds.x + cursor.x - dragState.cursor.x,
-      y: dragState.bounds.y + cursor.y - dragState.cursor.y
-    });
+    startPetDragFollow();
+    movePetWindowToCursor(toScreenPoint(point));
   });
   ipcMain.handle('pet:drag-end', () => {
-    dragState = null;
+    stopPetDragFollow();
   });
   ipcMain.handle('window:minimize', (event) => BrowserWindow.fromWebContents(event.sender)?.minimize());
   ipcMain.handle('window:close', (event) => {
@@ -1019,6 +1061,14 @@ function startControlServer(): void {
         showAdminWindow();
         return sendJson(res, { ok: true });
       }
+      if (route === 'POST /admin/minimize') {
+        adminWindow?.minimize();
+        return sendJson(res, { ok: true });
+      }
+      if (route === 'POST /admin/hide') {
+        adminWindow?.hide();
+        return sendJson(res, { ok: true });
+      }
       if (route === 'POST /pet/trigger-state') {
         const body = await readJsonBody<{ state: InteractionState }>(req);
         petWindow?.webContents.send('pet:trigger-state', body.state);
@@ -1084,7 +1134,6 @@ if (!gotSingleInstanceLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    showAdminWindow();
     petWindow?.show();
     petWindow?.focus();
   });
@@ -1093,7 +1142,6 @@ if (!gotSingleInstanceLock) {
     currentConfig = await loadConfig();
     registerIpc();
     startControlServer();
-    await createAdminWindow();
     await createPetWindow();
     const assets = await getAssetStatus();
     if (!assets.base.exists) {
@@ -1106,11 +1154,11 @@ if (!gotSingleInstanceLock) {
 }
 
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
-    void createAdminWindow();
+  if (!petWindow) {
     void createPetWindow();
   } else {
-    showAdminWindow();
+    petWindow.show();
+    petWindow.focus();
   }
 });
 
