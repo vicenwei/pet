@@ -91,6 +91,8 @@ let dragState: {
   cursor: Electron.Point;
   bounds: Electron.Rectangle;
   active: boolean;
+  moved: boolean;
+  stopAt: number;
   timer: ReturnType<typeof setInterval> | null;
 } | null = null;
 let generationProgress: GenerationProgress = {
@@ -517,17 +519,12 @@ function showAdminWindow(): void {
   adminWindow.focus();
 }
 
-function toScreenPoint(point?: { screenX: number; screenY: number }): Electron.Point {
-  if (!point || !Number.isFinite(point.screenX) || !Number.isFinite(point.screenY)) {
-    return screen.getCursorScreenPoint();
-  }
-  return { x: Math.round(point.screenX), y: Math.round(point.screenY) };
-}
-
 function movePetWindowToCursor(point = screen.getCursorScreenPoint()): void {
   if (!petWindow || !dragState) return;
   const nextX = dragState.bounds.x + point.x - dragState.cursor.x;
   const nextY = dragState.bounds.y + point.y - dragState.cursor.y;
+  if (!dragState.moved && Math.hypot(point.x - dragState.cursor.x, point.y - dragState.cursor.y) < 4) return;
+  dragState.moved = true;
   const display = screen.getDisplayNearestPoint(point);
   const maxX = display.workArea.x + display.workArea.width - dragState.bounds.width;
   const maxY = display.workArea.y + display.workArea.height - dragState.bounds.height;
@@ -541,8 +538,14 @@ function movePetWindowToCursor(point = screen.getCursorScreenPoint()): void {
 function startPetDragFollow(): void {
   if (!dragState || dragState.active) return;
   dragState.active = true;
-  movePetWindowToCursor();
-  dragState.timer = setInterval(movePetWindowToCursor, 16);
+  dragState.timer = setInterval(() => {
+    if (!dragState) return;
+    if (Date.now() > dragState.stopAt) {
+      stopPetDragFollow();
+      return;
+    }
+    movePetWindowToCursor();
+  }, 16);
   dragState.timer.unref?.();
 }
 
@@ -906,7 +909,6 @@ function registerIpc(): void {
   });
   ipcMain.handle('pet:hide', () => petWindow?.hide());
   ipcMain.handle('app:exit', () => app.quit());
-  ipcMain.handle('admin:show', () => showAdminWindow());
   ipcMain.handle('pet:trigger-state', (_event, state: InteractionState) => {
     petWindow?.webContents.send('pet:trigger-state', state);
     addLog('info', '状态机', `后台测试状态：${state}`);
@@ -951,19 +953,23 @@ function registerIpc(): void {
     currentPetState = state;
     adminWindow?.webContents.send('pet:state', state);
   });
-  ipcMain.handle('pet:drag-start', (_event, point?: { screenX: number; screenY: number }) => {
+  ipcMain.handle('pet:drag-start', () => {
     if (!petWindow) return;
+    stopPetDragFollow();
     dragState = {
-      cursor: toScreenPoint(point),
+      cursor: screen.getCursorScreenPoint(),
       bounds: petWindow.getBounds(),
       active: false,
+      moved: false,
+      stopAt: Date.now() + 15000,
       timer: null
     };
+    startPetDragFollow();
   });
-  ipcMain.on('pet:drag-move', (_event, point?: { screenX: number; screenY: number }) => {
+  ipcMain.on('pet:drag-move', () => {
     if (!petWindow || !dragState) return;
     startPetDragFollow();
-    movePetWindowToCursor(toScreenPoint(point));
+    movePetWindowToCursor();
   });
   ipcMain.handle('pet:drag-end', () => {
     stopPetDragFollow();
@@ -1056,10 +1062,6 @@ function startControlServer(): void {
         sendJson(res, { ok: true });
         app.quit();
         return;
-      }
-      if (route === 'POST /admin/show') {
-        showAdminWindow();
-        return sendJson(res, { ok: true });
       }
       if (route === 'POST /admin/minimize') {
         adminWindow?.minimize();

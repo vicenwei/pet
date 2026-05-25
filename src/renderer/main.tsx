@@ -806,7 +806,7 @@ function PetApp() {
       previewStartX: previewPositionRef.current.x,
       previewStartY: previewPositionRef.current.y
     };
-    await senyuAPI.dragStart({ screenX: event.screenX, screenY: event.screenY });
+    await senyuAPI.dragStart();
   }
 
   function handlePointerMove(event: React.PointerEvent) {
@@ -831,7 +831,7 @@ function PetApp() {
         previewPositionRef.current = next;
         setPreviewPosition(next);
       } else {
-        senyuAPI.dragMove({ screenX: event.screenX, screenY: event.screenY });
+        senyuAPI.dragMove();
       }
     }
   }
@@ -868,7 +868,6 @@ function PetApp() {
 
   function handleDoubleClick() {
     transitionTo('double_click', 'mouse_double_click');
-    senyuAPI.openAdmin();
   }
 
   const previewShellStyle: React.CSSProperties | undefined = isBrowserPreview

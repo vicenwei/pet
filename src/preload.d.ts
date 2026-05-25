@@ -37,8 +37,8 @@ declare global {
       clearLogs: () => Promise<void>;
       copyLogs: () => Promise<void>;
       setPetState: (state: InteractionState) => Promise<void>;
-      dragStart: (point?: { screenX: number; screenY: number }) => Promise<void>;
-      dragMove: (point?: { screenX: number; screenY: number }) => void;
+      dragStart: () => Promise<void>;
+      dragMove: () => void;
       dragEnd: () => Promise<void>;
       windowMinimize: () => Promise<void>;
       windowClose: () => Promise<void>;
